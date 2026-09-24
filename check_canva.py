@@ -1,7 +1,6 @@
 import os
-import sys
 import requests
-from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
 # === إعدادات ===
 URL = os.getenv("WEBSITE_URL", "https://bingotingo.com/best-social-media-platforms/")
@@ -10,14 +9,10 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 LAST_CANVA_FILE = "last_canva_link.txt"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-}
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
-# --- helpers ---
+
 def read_file(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -25,9 +20,11 @@ def read_file(path):
     except FileNotFoundError:
         return None
 
+
 def write_file(path, content):
     with open(path, "w", encoding="utf-8") as f:
         f.write(content if content else "")
+
 
 def send_telegram(message):
     if not TOKEN or not CHAT_ID:
@@ -41,61 +38,86 @@ def send_telegram(message):
     except Exception as e:
         print("⚠️ فشل إرسال رسالة:", e)
 
-# --- فحص الصفحة ---
+
+def find_real_get_here(page, base_domain_hint="bingotingo.com"):
+    """يدور على زرار GET HERE اللي رابطه حقيقي (مش # ومش رجوع لنفس الموقع)."""
+    links = page.query_selector_all("a")
+    for link in links:
+        try:
+            text = (link.inner_text() or "").strip().lower()
+        except Exception:
+            continue
+        if text != "get here":
+            continue
+        href = link.get_attribute("href")
+        if href and href != "#" and base_domain_hint not in href:
+            return href
+    return None
+
+
 def check_page():
     last_canva = read_file(LAST_CANVA_FILE)
+    canva_url = None
 
-    try:
-        print(f"🔍 فحص الصفحة الرئيسية: {URL}")
-        resp = requests.get(URL, timeout=15, headers=HEADERS)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(user_agent=UA, locale="en-US")
+        page = context.new_page()
 
-        # --- البحث عن زر Download ---
-        download_elem = None
-        for a in soup.find_all("a", href=True):
-            if a.text and "Download" in a.text:
-                download_elem = a
-                break
+        print(f"🔍 فتح الصفحة الرئيسية: {URL}")
+        page.goto(URL, timeout=30000, wait_until="domcontentloaded")
 
-        if not download_elem:
+        download_link = page.query_selector("a:has-text('Download')")
+        if not download_link:
             print("❌ مفيش زر Download دلوقتي")
+            browser.close()
             return
 
-        download_url = download_elem.get("href")
-        if not download_url:
+        download_href = download_link.get_attribute("href")
+        if not download_href:
             print("❌ الزرار موجود بس href فارغ")
+            browser.close()
             return
 
-        # --- فتح الصفحة الداخلية ---
-        inner_resp = requests.get(download_url, timeout=15, headers=HEADERS)
-        inner_resp.raise_for_status()
-        inner_soup = BeautifulSoup(inner_resp.text, "html.parser")
+        print(f"➡️ فتح الصفحة الداخلية: {download_href}")
+        page.goto(download_href, timeout=30000, wait_until="domcontentloaded")
 
-        # --- البحث عن زر GET HERE ---
-        get_here_elem = None
-        for a in inner_soup.find_all("a", href=True):
-            if a.text and a.text.strip().lower() == "get here":
-                get_here_elem = a
-                break
+        # محاولة أولى: يمكن الرابط الحقيقي يبقى ظاهر على طول
+        canva_url = find_real_get_here(page)
 
-        if get_here_elem:
-            canva_url = get_here_elem.get("href")
-            print(f"🔗 رابط Canva الموجود في الزر: {canva_url}")
+        # لو لسه مفيش، جرب دوس على زرار "GET HERE" (التحدي) وشوف هل بيفتح تاب جديد أو بيحدث الصفحة
+        if not canva_url:
+            try:
+                buttons = page.query_selector_all("a:has-text('GET HERE')")
+                # آخر واحد غالبًا هو زرار التحدي (اللي رابطه #)
+                challenge_btn = buttons[-1] if buttons else None
+                if challenge_btn:
+                    try:
+                        with context.expect_page(timeout=5000) as popup_info:
+                            challenge_btn.click(timeout=5000)
+                        popup = popup_info.value
+                        popup.wait_for_load_state(timeout=10000)
+                        popup.close()
+                    except Exception:
+                        # مفيش تاب جديد، يمكن الصفحة نفسها بتتحدث بعد الضغط
+                        pass
+                    page.wait_for_timeout(4000)
+                    canva_url = find_real_get_here(page)
+            except Exception as e:
+                print("⚠️ خطأ أثناء محاولة الضغط على زرار التحدي:", e)
 
-            # --- إرسال الرابط إذا حصل تغيير ---
-            if canva_url != last_canva:
-                send_telegram(f"🎨 الرابط من زر Get Here:\n{canva_url}")
-                write_file(LAST_CANVA_FILE, canva_url)
-            else:
-                print("ℹ️ نفس الرابط القديم، مفيش تغيير")
-        else:
-            print("❌ مفيش زر Get Here جوّه الصفحة الداخلية")
+        browser.close()
 
-    except requests.RequestException as e:
-        print("⚠️ خطأ في الشبكة:", e)
-    except Exception as e:
-        print("⚠️ خطأ:", e)
+    if not canva_url:
+        print("❌ لسه معرفناش نوصل للرابط الحقيقي بعد التحدي")
+        return
+
+    print(f"🔗 الرابط النهائي: {canva_url}")
+    if canva_url != last_canva:
+        send_telegram(f"🎨 الرابط من زر Get Here:\n{canva_url}")
+        write_file(LAST_CANVA_FILE, canva_url)
+    else:
+        print("ℹ️ نفس الرابط القديم، مفيش تغيير")
 
 
 if __name__ == "__main__":
