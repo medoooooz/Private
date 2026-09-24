@@ -2,7 +2,7 @@ name: Check Canva Link
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # كل 10 دقايق (ممكن تغيّرها)
+    - cron: "*/5 * * * *"    # كل 5 دقايق
   workflow_dispatch:          # يسمحلك تشغّله يدوي من GitHub لو حبيت تجرب
 
 permissions:
