@@ -85,24 +85,48 @@ def check_page():
         # محاولة أولى: يمكن الرابط الحقيقي يبقى ظاهر على طول
         canva_url = find_real_get_here(page)
 
-        # لو لسه مفيش، جرب دوس على زرار "GET HERE" (التحدي) وشوف هل بيفتح تاب جديد أو بيحدث الصفحة
+        # لو لسه مفيش، دوس على الزرار اللي فيه fetchSecureLink بالتحديد
         if not canva_url:
             try:
-                buttons = page.query_selector_all("a:has-text('GET HERE')")
-                # آخر واحد غالبًا هو زرار التحدي (اللي رابطه #)
-                challenge_btn = buttons[-1] if buttons else None
+                challenge_btn = page.query_selector("a[onclick*='fetchSecureLink']")
                 if challenge_btn:
+                    original_url = page.url
+                    pages_before = len(context.pages)
+
                     try:
-                        with context.expect_page(timeout=5000) as popup_info:
-                            challenge_btn.click(timeout=5000)
-                        popup = popup_info.value
-                        popup.wait_for_load_state(timeout=10000)
-                        popup.close()
-                    except Exception:
-                        # مفيش تاب جديد، يمكن الصفحة نفسها بتتحدث بعد الضغط
-                        pass
+                        challenge_btn.click(timeout=5000)
+                    except Exception as e:
+                        print("⚠️ خطأ أثناء الضغط:", e)
+
                     page.wait_for_timeout(4000)
-                    canva_url = find_real_get_here(page)
+
+                    # 1) هل اتفتح تاب جديد؟
+                    if len(context.pages) > pages_before:
+                        new_page = context.pages[-1]
+                        try:
+                            new_page.wait_for_load_state(timeout=8000)
+                        except Exception:
+                            pass
+                        popup_url = new_page.url
+                        print(f"🆕 اتفتح تاب جديد برابط: {popup_url}")
+                        if popup_url and popup_url != "about:blank":
+                            canva_url = popup_url
+                        new_page.close()
+
+                    # 2) هل الصفحة الحالية اتنقلت؟
+                    if not canva_url and page.url != original_url:
+                        print(f"➡️ الصفحة الحالية اتغيرت لـ: {page.url}")
+                        canva_url = page.url
+
+                    # 3) هل الـ href بتاع نفس الزرار اتحدّث في مكانه؟
+                    if not canva_url:
+                        canva_url = find_real_get_here(page)
+                    if not canva_url:
+                        new_href = challenge_btn.get_attribute("href")
+                        if new_href and new_href != "#":
+                            canva_url = new_href
+                else:
+                    print("❌ مفيش زرار فيه fetchSecureLink")
             except Exception as e:
                 print("⚠️ خطأ أثناء محاولة الضغط على زرار التحدي:", e)
 
