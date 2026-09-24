@@ -110,6 +110,32 @@ def check_page():
 
     if not canva_url:
         print("❌ لسه معرفناش نوصل للرابط الحقيقي بعد التحدي")
+        print("---- 🔬 معلومات تشخيصية ----")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(user_agent=UA, locale="en-US")
+            page = context.new_page()
+            page.goto(download_href, timeout=30000, wait_until="networkidle")
+            page.wait_for_timeout(2000)
+
+            all_links = page.query_selector_all("a")
+            print(f"عدد الروابط في الصفحة: {len(all_links)}")
+            for i, link in enumerate(all_links):
+                try:
+                    text = (link.inner_text() or "").strip()
+                except Exception:
+                    text = "?"
+                href = link.get_attribute("href")
+                onclick = link.get_attribute("onclick")
+                print(f"  [{i}] text='{text}' href='{href}' onclick='{onclick}'")
+
+            body_text = page.inner_text("body")
+            if "aptcha" in body_text or "Captcha" in body_text:
+                idx = body_text.find("aptcha")
+                print("نص حوالين كلمة Captcha:")
+                print(body_text[max(0, idx-100):idx+300])
+
+            browser.close()
         return
 
     print(f"🔗 الرابط النهائي: {canva_url}")
