@@ -10,6 +10,13 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 LAST_CANVA_FILE = "last_canva_link.txt"
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+}
+
 # --- helpers ---
 def read_file(path):
     try:
@@ -40,7 +47,7 @@ def check_page():
 
     try:
         print(f"🔍 فحص الصفحة الرئيسية: {URL}")
-        resp = requests.get(URL, timeout=15)
+        resp = requests.get(URL, timeout=15, headers=HEADERS)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -61,7 +68,7 @@ def check_page():
             return
 
         # --- فتح الصفحة الداخلية ---
-        inner_resp = requests.get(download_url, timeout=15)
+        inner_resp = requests.get(download_url, timeout=15, headers=HEADERS)
         inner_resp.raise_for_status()
         inner_soup = BeautifulSoup(inner_resp.text, "html.parser")
 
